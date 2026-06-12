@@ -1,0 +1,211 @@
+{
+  "1": {
+    "inputs": {
+      "ckpt_name": "Irodori-TTS-V3.safetensors",
+      "codec_repo": "Aratako/Semantic-DACVAE-Japanese-32dim",
+      "device": "cuda",
+      "dtype": "bf16"
+    },
+    "class_type": "IrodoriCheckpointLoader",
+    "_meta": {
+      "title": "Load Irodori Checkpoint"
+    }
+  },
+  "2": {
+    "inputs": {
+      "text": "やっほー、おにいちゃん、元気？",
+      "speaker_uncond_mode": "mask",
+      "caption": "",
+      "model": [
+        "1",
+        0
+      ],
+      "clip": [
+        "1",
+        1
+      ],
+      "ref_latent": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "IrodoriTextEncode",
+    "_meta": {
+      "title": "Irodori Text Encode"
+    }
+  },
+  "3": {
+    "inputs": {
+      "audio": [
+        "4",
+        0
+      ],
+      "vae": [
+        "1",
+        2
+      ]
+    },
+    "class_type": "VAEEncodeAudio",
+    "_meta": {
+      "title": "VAE Encode Audio"
+    }
+  },
+  "4": {
+    "inputs": {
+      "audio": "000006.wav",
+      "audioUI": "/api/view?filename=000006.wav&type=input&subfolder=&rand=0.7709333296643281"
+    },
+    "class_type": "LoadAudio",
+    "_meta": {
+      "title": "Load Audio"
+    }
+  },
+  "5": {
+    "inputs": {
+      "cfg_min_t": 0.5,
+      "cfg_max_t": 1,
+      "scale_1": 3,
+      "scale_2": 5,
+      "scale_3": 3,
+      "model": [
+        "1",
+        0
+      ],
+      "cond": [
+        "2",
+        0
+      ],
+      "uncond_1": [
+        "2",
+        1
+      ],
+      "uncond_2": [
+        "2",
+        2
+      ],
+      "uncond_3": [
+        "2",
+        3
+      ]
+    },
+    "class_type": "IrodoriCFGGuider",
+    "_meta": {
+      "title": "Irodori CFG Guider"
+    }
+  },
+  "6": {
+    "inputs": {
+      "noise": [
+        "7",
+        0
+      ],
+      "guider": [
+        "5",
+        0
+      ],
+      "sampler": [
+        "8",
+        0
+      ],
+      "sigmas": [
+        "9",
+        0
+      ],
+      "latent_image": [
+        "10",
+        0
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "SamplerCustomAdvanced"
+    }
+  },
+  "7": {
+    "inputs": {
+      "noise_seed": 4545
+    },
+    "class_type": "RandomNoise",
+    "_meta": {
+      "title": "RandomNoise"
+    }
+  },
+  "8": {
+    "inputs": {
+      "sampler_name": "euler"
+    },
+    "class_type": "KSamplerSelect",
+    "_meta": {
+      "title": "KSamplerSelect"
+    }
+  },
+  "9": {
+    "inputs": {
+      "scheduler": "simple",
+      "steps": 20,
+      "denoise": 1,
+      "model": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "BasicScheduler",
+    "_meta": {
+      "title": "BasicScheduler"
+    }
+  },
+  "10": {
+    "inputs": {
+      "text": "やっほー、おにいちゃん、元気？",
+      "seconds": 0,
+      "duration_scale": 1,
+      "batch_size": 1,
+      "model": [
+        "1",
+        0
+      ],
+      "clip": [
+        "1",
+        1
+      ],
+      "vae": [
+        "1",
+        2
+      ]
+    },
+    "class_type": "IrodoriEmptyLatent",
+    "_meta": {
+      "title": "Irodori Empty Latent"
+    }
+  },
+  "11": {
+    "inputs": {
+      "samples": [
+        "6",
+        1
+      ],
+      "vae": [
+        "1",
+        2
+      ]
+    },
+    "class_type": "VAEDecodeAudio",
+    "_meta": {
+      "title": "VAE Decode Audio"
+    }
+  },
+  "12": {
+    "inputs": {
+      "filename_prefix": "audio/ComfyUI",
+      "audioUI": "/api/view?filename=ComfyUI_00001.flac&type=output&subfolder=audio&rand=0.6986107197904688",
+      "audio": [
+        "11",
+        0
+      ]
+    },
+    "class_type": "SaveAudio",
+    "_meta": {
+      "title": "Save Audio (FLAC)"
+    }
+  }
+}
