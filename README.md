@@ -5,9 +5,36 @@
 
 ## セットアップ
 
-1. Irodori-TTS リポジトリを `~/Irodori-TTS` に置く（または環境変数 `IRODORI_TTS_PATH` でリポジトリルートを指定）
+1. `irodori_tts` パッケージを使えるようにする（下記 2 方式のどちらか）
 2. チェックポイント（例: `Irodori-TTS-V3.safetensors`）を `ComfyUI/models/checkpoints/` に置く
 3. ComfyUI を再起動
+
+### irodori_tts の解決方式
+
+インポートは「① pip インストール済み → ② `IRODORI_TTS_PATH` → ③ `~/Irodori-TTS` →
+④ custom_nodes 隣接ディレクトリ」の順で解決される。
+
+**方式A（推奨）: リポジトリを置いてパス参照**
+
+```bash
+git clone https://github.com/Aratako/Irodori-TTS.git ~/Irodori-TTS
+# または任意の場所に置いて IRODORI_TTS_PATH=/path/to/Irodori-TTS
+```
+
+ComfyUI の Python 環境には触れない。実行に必要な依存（peft / safetensors /
+transformers / sentencepiece 等）が足りない場合は個別に pip install する。
+
+**方式B: pip インストール**
+
+```bash
+pip install git+https://github.com/Aratako/Irodori-TTS.git
+```
+
+> ⚠️ Irodori-TTS は `torch>=2.10` を要求し、wandb / gradio / datasets など
+> 学習用の重い依存も含む。**ComfyUI の venv に入れると torch が強制
+> アップグレードされ環境が壊れる可能性がある**ため、依存バージョンを
+> 確認できる場合のみ推奨。同じ理由で本リポジトリは requirements.txt での
+> 自動インストールを意図的にしていない。
 
 コーデック（デフォルト: `Aratako/Semantic-DACVAE-Japanese-32dim`）は初回実行時に
 Hugging Face から自動ダウンロードされる。
