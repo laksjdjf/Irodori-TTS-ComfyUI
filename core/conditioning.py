@@ -114,7 +114,10 @@ def encode_speaker_from_latent(model, ref_latent: dict) -> torch.Tensor:
         state = irodori.speaker_norm(state)
         state, _ = irodori._prepend_masked_mean_token(state, msk_p)
 
-    return state[0].contiguous()  # (tokens, speaker_dim) — first reference item
+    # Canonical SPEAKER_EMBED storage is CPU float32 (matches the loader and
+    # saved files), so embeddings from different sources can be merged/compared
+    # without device/dtype mismatches. Consumers move it to the model device.
+    return state[0].detach().to(device="cpu", dtype=torch.float32).contiguous()
 
 
 def encode_text_conditions(

@@ -280,6 +280,20 @@ def test_encode_speaker_from_latent():
     emb = cd.encode_speaker_from_latent(patcher, ref)
     # T tokens + 1 prepended mean token
     assert emb.shape == (T + 1, spk_dim), emb.shape
+    # canonical storage: CPU float32 (so it merges with loader-sourced embeds)
+    assert emb.device.type == "cpu" and emb.dtype == torch.float32
+
+
+def test_merge_mixed_device_dtype():
+    """Encoder output (e.g. cuda/bf16) + loader output (cpu/f32) must merge."""
+    em = _mod("nodes.embed_merge")
+    a = {"embedding": torch.randn(16, 768, dtype=torch.bfloat16)}  # encoder-like
+    b = {"embedding": torch.randn(16, 768, dtype=torch.float32)}   # loader-like
+    out = em.IrodoriSpeakerEmbedMerge.execute(a, b, "concat").args[0]
+    assert out["embedding"].shape == (32, 768)
+    assert out["embedding"].dtype == torch.float32
+    avg = em.IrodoriSpeakerEmbedMerge.execute(a, b, "average").args[0]
+    assert avg["embedding"].dtype == torch.float32
 
 
 def test_speaker_embed_merge():

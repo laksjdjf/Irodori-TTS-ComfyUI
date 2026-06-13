@@ -10,6 +10,7 @@ encode_conditions(speaker_state_override=...) as-is.
 from __future__ import annotations
 
 import folder_paths
+import torch
 from comfy_api.latest import io
 
 from .types import SpeakerEmbed
@@ -43,4 +44,5 @@ class IrodoriSpeakerEmbedLoader(io.ComfyNode):
         path = folder_paths.get_full_path("speaker_embeddings", embed_name)
         raw = load_file(path, device="cpu")
         embedding = normalize_speaker_inversion_payload(raw)["speaker_embedding"]  # (tokens, speaker_dim)
-        return io.NodeOutput({"embedding": embedding})
+        # canonical SPEAKER_EMBED storage: CPU float32 (see core/conditioning.py)
+        return io.NodeOutput({"embedding": embedding.to(device="cpu", dtype=torch.float32)})

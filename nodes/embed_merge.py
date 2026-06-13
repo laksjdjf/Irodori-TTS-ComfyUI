@@ -60,7 +60,10 @@ class IrodoriSpeakerEmbedMerge(io.ComfyNode):
             (speaker_embed_c, weight_c),
             (speaker_embed_d, weight_d),
         ]
-        items = [(e["embedding"], float(w)) for e, w in pairs if e is not None]
+        # Coerce to the canonical SPEAKER_EMBED storage (CPU float32) so embeddings
+        # from different sources (encoder=cuda/bf16, loader=cpu/f32) combine cleanly.
+        items = [(e["embedding"].to(device="cpu", dtype=torch.float32), float(w))
+                 for e, w in pairs if e is not None]
         embeds = [e for e, _ in items]
         weights = [w for _, w in items]
 
@@ -81,4 +84,4 @@ class IrodoriSpeakerEmbedMerge(io.ComfyNode):
                 raise ValueError("average weights sum to zero; set at least one weight > 0.")
             merged = sum(w * e for e, w in items) / total  # (tokens, speaker_dim)
 
-        return io.NodeOutput({"embedding": merged.contiguous()})
+        return io.NodeOutput({"embedding": merged.to(dtype=torch.float32).contiguous()})
