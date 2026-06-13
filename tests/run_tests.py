@@ -212,11 +212,60 @@ def test_v3_schemas():
     pkg = importlib.import_module(PKG)
     ext = asyncio.run(pkg.comfy_entrypoint())
     nodes = asyncio.run(ext.get_node_list())
-    assert len(nodes) == 6
+    assert len(nodes) == 9
     for n in nodes:
         schema = n.GET_SCHEMA()  # validates input/output id uniqueness
         assert schema.display_name
         n.INPUT_TYPES()          # V1 compatibility shim
+
+
+def test_sway_scheduler():
+    sch = _mod("nodes.scheduler")
+
+    s = sch.sway_sigmas(20, -1.0)
+    assert s.shape == (21,)
+    assert float(s[0]) == 1.0 and float(s[-1]) == 0.0
+    assert bool(torch.all(s[:-1] > s[1:]))
+    # negative coeff densifies the noise side: first step smaller than linear's
+    assert float(s[0] - s[1]) < 1.0 / 20
+
+    # coeff 0 == linear schedule
+    lin = sch.sway_sigmas(10, 0.0)
+    assert torch.allclose(lin, torch.linspace(1.0, 0.0, 11))
+
+    # denoise scales the start point (audio2audio)
+    half = sch.sway_sigmas(10, -1.0, denoise=0.5)
+    assert abs(float(half[0]) - 0.5) < 1e-6 and float(half[-1]) == 0.0
+
+
+def test_trim_tail():
+    pp = _mod("nodes.postprocess")
+    patch, ldim = 2, 4
+
+    class FakeCodec:
+        latent_dim = ldim
+
+    class FakeVae:
+        codec = FakeCodec()
+        model_cfg = type("C", (), {"latent_patch_size": patch})()
+
+    # 10 frames of speech-like noise, 10 flat zero frames
+    z = torch.cat([torch.randn(1, 10, ldim), torch.zeros(1, 10, ldim)], dim=1)
+    from irodori_tts.codec import patchify_latent
+    lat = {"samples": patchify_latent(z, patch).transpose(1, 2).unsqueeze(2), "sample_rate": 48000}
+
+    out = pp.IrodoriTrimTail.execute(FakeVae(), lat, window_size=5,
+                                     std_threshold=0.05, mean_threshold=0.1).args[0]
+    t_out = out["samples"].shape[-1]
+    assert t_out == 5, f"expected 5 patched steps (10 frames), got {t_out}"
+    assert out["sample_rate"] == 48000
+
+    # no flat tail -> unchanged
+    z2 = torch.randn(1, 20, ldim)
+    lat2 = {"samples": patchify_latent(z2, patch).transpose(1, 2).unsqueeze(2)}
+    out2 = pp.IrodoriTrimTail.execute(FakeVae(), lat2, window_size=5,
+                                      std_threshold=0.05, mean_threshold=0.1).args[0]
+    assert out2["samples"].shape[-1] == 10
 
 
 # ---------------------------------------------------------------------------

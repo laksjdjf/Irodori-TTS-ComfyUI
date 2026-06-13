@@ -49,6 +49,9 @@ Hugging Face から自動ダウンロードされる。
 | `IrodoriTextEncode` | テキスト＋話者条件 → 4種 CONDITIONING（cond / text_uncond / speaker_uncond / caption_uncond） |
 | `IrodoriCFGGuider` | N-way CFG の GUIDER を作成（cfg_min_t〜cfg_max_t の範囲でのみCFG適用） |
 | `IrodoriEmptyLatent` | duration 予測（seconds=0 で自動）→ ゼロ LATENT |
+| `IrodoriSwayScheduler` | F5-TTS流 Sway Sampling の SIGMAS（BasicScheduler と差し替え） |
+| `IrodoriTrimTail` | 「喋り終わり」をlatentの平坦化点で検出して末尾をカット（本家 trim_tail 相当） |
+| `IrodoriWatermark` | SilentCipher 非可聴透かしを埋め込み（本家は常時適用） |
 
 話者条件は `ref_latent`（参照音声）か `speaker_embed`（inversion 埋め込み）の**どちらか一方**を
 `IrodoriTextEncode` に接続する（両方接続するとエラー）。`speaker_embed` は
@@ -75,10 +78,26 @@ Hugging Face から自動ダウンロードされる。
     + uncond_2=speaker_uncond / scale_2=5.0
     → GUIDER
 
-[RandomNoise] / [KSamplerSelect euler] / [BasicScheduler steps=40]
+[RandomNoise] / [KSamplerSelect euler] / [IrodoriSwayScheduler steps=20]（or BasicScheduler）
 
-[SamplerCustomAdvanced] → [VAEDecodeAudio] → [SaveAudio]
+[SamplerCustomAdvanced] → [IrodoriTrimTail] → [VAEDecodeAudio]
+    → [IrodoriWatermark] → [SaveAudio]
 ```
+
+### 後処理（本家パイプライン互換）
+
+- **IrodoriTrimTail**: RF-DiT は喋り終わった後の latent をほぼ一定値で埋めるため、
+  平坦化点を検出してそこでカットする（本家はデフォルトON）。duration 予測が
+  長めに出たときの末尾の無音・ノイズを除去する。サンプラーと VAEDecodeAudio の間に挟む。
+- **IrodoriWatermark**: 本家パイプラインは生成音声全てに SilentCipher の
+  非可聴透かしを**無効化オプションなしで**埋め込む（AI生成音声の事後識別のため）。
+  本ノード集はモジュラーな ComfyUI 上で接続を強制できないが、**生成音声を保存・
+  配布する場合は本ノードを通すことを強く推奨する**。`silentcipher` 未インストール時は
+  警告を出して素通しする（本家と同じ挙動）。
+
+  ```bash
+  pip install git+https://github.com/SesameAILabs/silentcipher.git
+  ```
 
 ### 標準ノードとの互換性（責任分解）
 
@@ -185,7 +204,9 @@ nodes/
 ├── speaker_embed_loader.py  # IrodoriSpeakerEmbedLoader
 ├── text_encode.py           # IrodoriTextEncode
 ├── guider.py                # IrodoriCFGGuider + IrodoriGuider
-└── latent.py                # IrodoriEmptyLatent
+├── latent.py                # IrodoriEmptyLatent
+├── scheduler.py             # IrodoriSwayScheduler
+└── postprocess.py           # IrodoriTrimTail + IrodoriWatermark
 ```
 ## テスト
 
