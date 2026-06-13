@@ -1,0 +1,240 @@
+#!/usr/bin/env python3
+"""
+Stub-based regression tests for Irodori-TTS-ComfyUI.
+
+Requires a ComfyUI checkout (this repo must live in ComfyUI/custom_nodes/)
+and its Python environment, but no models, GPU, or running server.
+
+Run from anywhere:
+    python custom_nodes/Irodori-TTS-ComfyUI/tests/run_tests.py
+"""
+from __future__ import annotations
+
+import asyncio
+import importlib
+import sys
+import traceback
+from pathlib import Path
+
+COMFY_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(COMFY_ROOT))
+
+import folder_paths  # noqa: F401,E402  (comfy bootstrap)
+import torch  # noqa: E402
+
+PKG = "custom_nodes.Irodori-TTS-ComfyUI"
+D, T = 8, 16
+
+
+def _mod(name: str):
+    return importlib.import_module(f"{PKG}.{name}")
+
+
+class StubRFDiT(torch.nn.Module):
+    """Minimal stand-in for TextToLatentRFDiT."""
+
+    def __init__(self):
+        super().__init__()
+        self.p = torch.nn.Parameter(torch.zeros(1))
+        self.cache_builds = 0
+        self.fwd_total = 0
+        self.fwd_cached = 0
+
+    def build_context_kv_cache(self, text_state, speaker_state, caption_state=None):
+        self.cache_builds += 1
+        return [("k", "v")] * 4
+
+    def forward_with_encoded_conditions(self, x_t, t, text_state, text_mask,
+                                        speaker_state=None, speaker_mask=None,
+                                        caption_state=None, caption_mask=None,
+                                        context_kv_cache=None, **kw):
+        assert text_mask.dtype == torch.bool, "masks must stay bool (SDPA additive-bias pitfall)"
+        assert text_state.shape[0] == x_t.shape[0], "cond batch must match x batch"
+        self.fwd_total += 1
+        if context_kv_cache is not None:
+            self.fwd_cached += 1
+        return x_t * 0.1
+
+
+def make_wrapper(stub=None):
+    mw = _mod("core.model_wrapper")
+    stub = stub or StubRFDiT()
+    cfg = type("Cfg", (), {"patched_latent_dim": D})()
+    w = mw.IrodoriModelWrapper(stub, cfg, None, None, 256, torch.device("cpu"), torch.float32)
+    import comfy.model_patcher
+    patcher = comfy.model_patcher.ModelPatcher(
+        w, load_device=torch.device("cpu"), offload_device=torch.device("cpu"), size=4)
+    return stub, w, patcher
+
+
+def make_conds():
+    cd = _mod("core.conditioning")
+    ts = torch.randn(1, 5, 32)
+    tm = torch.ones(1, 5, dtype=torch.bool)
+    pos = cd.pack_cond(ts, tm, None, None, None, None)
+    neg = cd.pack_cond(torch.zeros_like(ts), torch.zeros_like(tm), None, None, None, None)
+    return pos, neg
+
+
+# ---------------------------------------------------------------------------
+
+def test_latents_roundtrip():
+    L = _mod("core.latents")
+    x = torch.randn(2, 16, 1, 7)
+    assert torch.equal(L.irodori_to_comfy(L.comfy_to_irodori(x)), x)
+
+
+def test_prepare_cond_keeps_bool_masks_and_tiles_batch():
+    g = _mod("nodes.guider")
+    cd = _mod("core.conditioning")
+    pos, _ = make_conds()
+    prep = g._prepare_cond(pos, torch.device("cpu"), torch.bfloat16, 2)
+    d = cd.unpack_cond(prep)
+    assert d["text_state"].dtype == torch.bfloat16 and d["text_state"].shape[0] == 2
+    assert d["text_mask"].dtype == torch.bool and d["text_mask"].shape[0] == 2
+    assert d["speaker_state"] is None
+
+
+def test_batch_conds_handles_mixed_none():
+    g = _mod("nodes.guider")
+    cd = _mod("core.conditioning")
+    s = torch.randn(1, 5, 8)
+    m = torch.ones(1, 5, dtype=torch.bool)
+    c1 = g._prepare_cond(cd.pack_cond(s, m, None, None, s.clone(), m.clone()),
+                         torch.device("cpu"), torch.float32, 1)
+    c2 = g._prepare_cond(cd.pack_cond(s, m, s.clone(), m.clone(), None, None),
+                         torch.device("cpu"), torch.float32, 1)
+    merged = g._batch_conds([c1, c2])
+    assert merged["text_state"].shape[0] == 2
+    assert merged["speaker_state"][:1].abs().sum() == 0  # zero-filled for c1
+    assert merged["caption_mask"].dtype == torch.bool
+
+
+def test_stock_cfg_guider_e2e():
+    """Standard CFGGuider: timestep-range gating, KV cache, run isolation."""
+    import comfy.samplers
+    stub, w, patcher = make_wrapper()
+    pos, neg = make_conds()
+    neg[0][1]["start_percent"] = 0.0
+    neg[0][1]["end_percent"] = 0.5
+
+    gd = comfy.samplers.CFGGuider(patcher)
+    gd.set_conds(pos, neg)
+    gd.set_cfg(4.0)
+    sig = comfy.samplers.calculate_sigmas(w.model_sampling, "simple", 8)
+    out = gd.sample(torch.randn(1, D, 1, T), torch.zeros(1, D, 1, T),
+                    comfy.samplers.sampler_object("euler"), sig, seed=0)
+    assert out.shape == (1, D, 1, T) and torch.isfinite(out).all()
+    assert stub.cache_builds == 2, f"expected 2 cache builds, got {stub.cache_builds}"
+    assert stub.fwd_cached == stub.fwd_total == 8
+
+    gd.sample(torch.randn(1, D, 1, T), torch.zeros(1, D, 1, T),
+              comfy.samplers.sampler_object("euler"), sig, seed=1)
+    assert stub.cache_builds == 4, "cache must be invalidated between runs (pre_run)"
+
+
+def test_custom_guider_e2e():
+    import comfy.samplers
+    g = _mod("nodes.guider")
+    stub, w, patcher = make_wrapper()
+    pos, neg = make_conds()
+
+    ig = g.IrodoriGuider(patcher)
+    ig.set_conds(pos)
+    ig.add_uncond(neg, 3.0)
+    ig.set_cfg(0.5, 1.0)
+    sig = comfy.samplers.calculate_sigmas(w.model_sampling, "simple", 8)
+    out = ig.sample(torch.randn(2, D, 1, T), torch.zeros(2, D, 1, T),
+                    comfy.samplers.sampler_object("euler"), sig, seed=0)
+    assert out.shape == (2, D, 1, T) and torch.isfinite(out).all()
+    assert stub.cache_builds == 2
+    assert stub.fwd_cached == stub.fwd_total == 8
+
+
+def test_peft_lora_conversion_and_patching():
+    """Synthetic PEFT dict → ComfyUI format → key mapping → weight patching."""
+    import comfy.lora
+    pl = _mod("core.peft_lora")
+
+    raw = {
+        "base_model.model.blocks.0.attention.wq.lora_A.weight": torch.randn(4, 32),
+        "base_model.model.blocks.0.attention.wq.lora_B.weight": torch.randn(32, 4),
+        "base_model.model.blocks.1.mlp.w1.lora_A.weight": torch.randn(4, 32),
+        "base_model.model.blocks.1.mlp.w1.lora_B.weight": torch.randn(64, 4),
+        "base_model.model.duration_predictor.proj.weight": torch.randn(8, 8),
+        "base_model.model.duration_predictor.proj.bias": torch.randn(8),
+    }
+    sd = pl.convert_peft_state_dict(raw, lora_alpha=8.0)
+    assert "diffusion_model.blocks.0.attention.wq.lora_A.weight" in sd
+    assert float(sd["diffusion_model.blocks.0.attention.wq.alpha"]) == 8.0
+    assert "diffusion_model.duration_predictor.proj.set_weight" in sd
+    assert "diffusion_model.duration_predictor.proj.bias.set_weight" in sd
+    # already-converted dicts pass through
+    assert pl.convert_peft_state_dict(sd, 8.0) is sd
+
+    class Holder(torch.nn.Module):
+        pass
+
+    root = Holder()
+
+    def add_param(full, t):
+        m = root
+        parts = full.split(".")
+        for p in parts[:-1]:
+            if p not in m._modules:
+                m.add_module(p, Holder())
+            m = m._modules[p]
+        m.register_parameter(parts[-1], torch.nn.Parameter(torch.zeros_like(t)))
+
+    add_param("blocks.0.attention.wq.weight", torch.zeros(32, 32))
+    add_param("blocks.1.mlp.w1.weight", torch.zeros(64, 32))
+    add_param("duration_predictor.proj.weight", torch.zeros(8, 8))
+    add_param("duration_predictor.proj.bias", torch.zeros(8))
+
+    stub, w, patcher = make_wrapper(stub=None)
+    w.diffusion_model = root  # swap in the shaped stub
+
+    key_map = comfy.lora.model_lora_keys_unet(w, {})
+    patches = comfy.lora.load_lora(sd, key_map, log_missing=False)
+    assert len(patches) == 4, f"expected 4 patches, got {len(patches)}"
+    model_sd = w.state_dict()
+    assert all(k in model_sd for k in patches)
+
+    applied = patcher.add_patches(patches, 1.0)
+    assert len(applied) == 4
+    patcher.patch_model()
+    params = dict(w.named_parameters())
+    assert params["diffusion_model.blocks.0.attention.wq.weight"].abs().max() > 0
+    assert params["diffusion_model.duration_predictor.proj.weight"].abs().max() > 0
+
+
+def test_v3_schemas():
+    pkg = importlib.import_module(PKG)
+    ext = asyncio.run(pkg.comfy_entrypoint())
+    nodes = asyncio.run(ext.get_node_list())
+    assert len(nodes) == 6
+    for n in nodes:
+        schema = n.GET_SCHEMA()  # validates input/output id uniqueness
+        assert schema.display_name
+        n.INPUT_TYPES()          # V1 compatibility shim
+
+
+# ---------------------------------------------------------------------------
+
+def main() -> int:
+    tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
+    failed = 0
+    for t in tests:
+        try:
+            t()
+            print(f"PASS {t.__name__}")
+        except Exception:
+            failed += 1
+            print(f"FAIL {t.__name__}")
+            traceback.print_exc()
+    print(f"\n{len(tests) - failed}/{len(tests)} passed")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

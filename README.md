@@ -187,6 +187,14 @@ nodes/
 ├── guider.py                # IrodoriCFGGuider + IrodoriGuider
 └── latent.py                # IrodoriEmptyLatent
 ```
+## テスト
+
+モデル・GPU不要のスタブ回帰テスト（ComfyUI checkout と Python 環境のみ必要）:
+
+```bash
+python custom_nodes/Irodori-TTS-ComfyUI/tests/run_tests.py
+```
+
 ## ライセンス
 
 MIT License（Irodori-TTS 本体と同じ）。
