@@ -212,7 +212,7 @@ def test_v3_schemas():
     pkg = importlib.import_module(PKG)
     ext = asyncio.run(pkg.comfy_entrypoint())
     nodes = asyncio.run(ext.get_node_list())
-    assert len(nodes) == 11
+    assert len(nodes) == 10
     for n in nodes:
         schema = n.GET_SCHEMA()  # validates input/output id uniqueness
         assert schema.display_name
@@ -294,34 +294,6 @@ def test_merge_mixed_device_dtype():
     assert out["embedding"].dtype == torch.float32
     avg = em.IrodoriSpeakerEmbedMerge.execute(a, b, "average").args[0]
     assert avg["embedding"].dtype == torch.float32
-
-
-def test_speaker_embed_resample():
-    rs = _mod("nodes.embed_resample")
-    N = rs.IrodoriSpeakerEmbedResample
-
-    # 6 -> 2: adaptive windows [0:3],[3:6], each the chunk mean
-    emb = torch.arange(6, dtype=torch.float32)[:, None].repeat(1, 4)  # (6,4), token i = i
-    out = N.execute({"embedding": emb}, 2, False).args[0]["embedding"]
-    assert out.shape == (2, 4)
-    assert torch.allclose(out[0], torch.full((4,), 1.0))  # mean(0,1,2)
-    assert torch.allclose(out[1], torch.full((4,), 4.0))  # mean(3,4,5)
-    assert out.dtype == torch.float32
-
-    # target >= current count -> no-op
-    same = N.execute({"embedding": emb}, 10, False).args[0]["embedding"]
-    assert same.shape == (6, 4) and torch.allclose(same, emb)
-
-    # keep_first_token: head preserved, rest pooled; total == target
-    big = torch.randn(7, 8)
-    kept = N.execute({"embedding": big}, 4, True).args[0]["embedding"]
-    assert kept.shape == (4, 8)
-    assert torch.allclose(kept[0], big[0])  # token 0 untouched
-
-    # realistic: 315-token reference -> 16 (balances against a 16-token inversion)
-    ref = torch.randn(315, 768)
-    r16 = N.execute({"embedding": ref}, 16, True).args[0]["embedding"]
-    assert r16.shape == (16, 768)
 
 
 def test_speaker_embed_merge():
