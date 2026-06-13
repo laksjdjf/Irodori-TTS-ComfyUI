@@ -62,9 +62,12 @@ class IrodoriVAEWrapper:
     def decode(self, latent: torch.Tensor) -> torch.Tensor:
         from irodori_tts.codec import unpatchify_latent
 
+        from .watermark import apply_watermark
+
         x = comfy_to_irodori(latent)                                 # (B, D, 1, T) → (B, T, D)
         x = unpatchify_latent(x, self.model_cfg.latent_patch_size, self.codec.latent_dim)
         audio = self.codec.decode_latent(x)                          # → (B, 1, T_audio)
+        audio = apply_watermark(audio, self.codec)                   # official: always watermark
         return audio.movedim(1, -1)                                  # → (B, T_audio, 1)
 
 

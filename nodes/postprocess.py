@@ -1,17 +1,15 @@
 """
-Post-processing nodes matching the official inference pipeline:
+IrodoriTrimTail — cut the flat "finished speaking" tail from a sampled latent
+                  (official trim_tail / find_flattening_point, on by default
+                  upstream). Place between the sampler and VAEDecodeAudio.
 
-IrodoriTrimTail  — cut the flat "finished speaking" tail from a sampled latent
-                   (official trim_tail / find_flattening_point, on by default upstream)
-IrodoriWatermark — embed the SilentCipher watermark in generated audio
-                   (the official pipeline always applies this; keep it in your
-                   workflow so outputs stay machine-identifiable as AI-generated)
+The SilentCipher watermark is NOT a node — to match the official pipeline it is
+applied unconditionally inside IrodoriVAEWrapper.decode() (see core/watermark.py).
 """
 from __future__ import annotations
 
 import math
 
-import torch
 from comfy_api.latest import io
 
 from ..core.latents import comfy_to_irodori, irodori_to_comfy
@@ -72,53 +70,3 @@ class IrodoriTrimTail(io.ComfyNode):
         out = dict(samples)
         out["samples"] = irodori_to_comfy(patchify_latent(z, patch))
         return io.NodeOutput(out)
-
-
-# module-level singleton — ComfyUI locks node classes during execution,
-# so the cache cannot live in a class attribute
-_WATERMARKER = None
-
-
-def _get_watermarker():
-    global _WATERMARKER
-    if _WATERMARKER is None:
-        import comfy.model_management
-        from irodori_tts.watermark import SilentCipherWatermarker
-
-        device = comfy.model_management.get_torch_device()
-        _WATERMARKER = SilentCipherWatermarker(device=str(device))
-    return _WATERMARKER
-
-
-class IrodoriWatermark(io.ComfyNode):
-    @classmethod
-    def define_schema(cls) -> io.Schema:
-        return io.Schema(
-            node_id="IrodoriWatermark",
-            display_name="Irodori Watermark (SilentCipher)",
-            category="Irodori-TTS",
-            description="Embed the inaudible SilentCipher watermark, matching the official pipeline (which always applies it). Place before SaveAudio. Passes audio through with a warning if silentcipher is not installed.",
-            inputs=[
-                io.Audio.Input("audio"),
-            ],
-            outputs=[
-                io.Audio.Output(display_name="audio"),
-            ],
-        )
-
-    @classmethod
-    def execute(cls, audio: dict) -> io.NodeOutput:
-        wm = _get_watermarker()
-        if not wm.ready:
-            print("[Irodori-TTS] warning: SilentCipher is unavailable; "
-                  "generated audio was NOT watermarked.")
-            return io.NodeOutput(audio)
-
-        waveform = audio["waveform"].detach().to(device="cpu", dtype=torch.float32)  # (B, C, T)
-        sample_rate = int(audio["sample_rate"])
-        encoded = wm.encode_batch(
-            [waveform[i] for i in range(waveform.shape[0])],
-            sample_rate=sample_rate,
-        )
-        out = torch.stack([e.to(torch.float32) for e in encoded], dim=0)
-        return io.NodeOutput({"waveform": out, "sample_rate": sample_rate})

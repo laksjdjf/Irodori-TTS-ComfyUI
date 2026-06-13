@@ -51,7 +51,14 @@ Hugging Face から自動ダウンロードされる。
 | `IrodoriEmptyLatent` | duration 予測（seconds=0 で自動）→ ゼロ LATENT |
 | `IrodoriSwayScheduler` | F5-TTS流 Sway Sampling の SIGMAS（BasicScheduler と差し替え） |
 | `IrodoriTrimTail` | 「喋り終わり」をlatentの平坦化点で検出して末尾をカット（本家 trim_tail 相当） |
-| `IrodoriWatermark` | SilentCipher 非可聴透かしを埋め込み（本家は常時適用） |
+
+SilentCipher 透かしは**ノードではなく** `VAEDecodeAudio`（の内部の `IrodoriVAEWrapper.decode`）で
+**常時適用**される（本家パイプライン同様、無効化オプションなし）。参照音声のエンコードには
+適用されず、生成音声のデコード時のみ。`silentcipher` 未インストール時は警告を出して素通しする。
+
+```bash
+pip install git+https://github.com/SesameAILabs/silentcipher.git
+```
 
 話者条件は `ref_latent`（参照音声）か `speaker_embed`（inversion 埋め込み）の**どちらか一方**を
 `IrodoriTextEncode` に接続する（両方接続するとエラー）。`speaker_embed` は
@@ -80,8 +87,7 @@ Hugging Face から自動ダウンロードされる。
 
 [RandomNoise] / [KSamplerSelect euler] / [IrodoriSwayScheduler steps=20]（or BasicScheduler）
 
-[SamplerCustomAdvanced] → [IrodoriTrimTail] → [VAEDecodeAudio]
-    → [IrodoriWatermark] → [SaveAudio]
+[SamplerCustomAdvanced] → [IrodoriTrimTail] → [VAEDecodeAudio] → [SaveAudio]
 ```
 
 ### 後処理（本家パイプライン互換）
@@ -89,15 +95,10 @@ Hugging Face から自動ダウンロードされる。
 - **IrodoriTrimTail**: RF-DiT は喋り終わった後の latent をほぼ一定値で埋めるため、
   平坦化点を検出してそこでカットする（本家はデフォルトON）。duration 予測が
   長めに出たときの末尾の無音・ノイズを除去する。サンプラーと VAEDecodeAudio の間に挟む。
-- **IrodoriWatermark**: 本家パイプラインは生成音声全てに SilentCipher の
-  非可聴透かしを**無効化オプションなしで**埋め込む（AI生成音声の事後識別のため）。
-  本ノード集はモジュラーな ComfyUI 上で接続を強制できないが、**生成音声を保存・
-  配布する場合は本ノードを通すことを強く推奨する**。`silentcipher` 未インストール時は
-  警告を出して素通しする（本家と同じ挙動）。
-
-  ```bash
-  pip install git+https://github.com/SesameAILabs/silentcipher.git
-  ```
+- **SilentCipher 透かし**: 本家パイプラインは生成音声全てに非可聴透かしを
+  **無効化オプションなしで**埋め込む（AI生成音声の事後識別のため）。本ノード集も
+  これに合わせ、`VAEDecodeAudio` のデコード時に常時適用する。参照音声のエンコードには
+  適用されない。`silentcipher` 未インストール時は警告を出して素通しする（本家と同じ挙動）。
 
 ### 標準ノードとの互換性（責任分解）
 
@@ -195,6 +196,7 @@ core/
 ├── latents.py             # (B,D,1,T) ⇔ (B,T,D) 変換
 ├── conditioning.py        # CONDITIONING パック / encode_conditions 共通処理
 ├── peft_lora.py           # PEFT → ComfyUI LoRA 形式変換
+├── watermark.py           # SilentCipher 透かし（decode時に常時適用）
 ├── model_wrapper.py       # IrodoriModelSampling / IrodoriLatentFormat / IrodoriModelWrapper
 └── loader.py              # チェックポイント読み込み + IrodoriVAEWrapper
 nodes/
@@ -206,7 +208,7 @@ nodes/
 ├── guider.py                # IrodoriCFGGuider + IrodoriGuider
 ├── latent.py                # IrodoriEmptyLatent
 ├── scheduler.py             # IrodoriSwayScheduler
-└── postprocess.py           # IrodoriTrimTail + IrodoriWatermark
+└── postprocess.py           # IrodoriTrimTail
 ```
 ## テスト
 

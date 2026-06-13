@@ -1,7 +1,7 @@
 """
 Irodori-TTS ComfyUI integration.
 
-Registers 9 custom nodes (V3 schema) that connect Irodori-TTS
+Registers 8 custom nodes (V3 schema) that connect Irodori-TTS
 (RF-DiT Japanese TTS) to ComfyUI's sampling pipeline.
 """
 import os
@@ -27,7 +27,7 @@ from .nodes.text_encode import IrodoriTextEncode  # noqa: E402
 from .nodes.guider import IrodoriCFGGuider  # noqa: E402
 from .nodes.latent import IrodoriEmptyLatent  # noqa: E402
 from .nodes.scheduler import IrodoriSwayScheduler  # noqa: E402
-from .nodes.postprocess import IrodoriTrimTail, IrodoriWatermark  # noqa: E402
+from .nodes.postprocess import IrodoriTrimTail  # noqa: E402
 
 
 class IrodoriTTSExtension(ComfyExtension):
@@ -42,7 +42,6 @@ class IrodoriTTSExtension(ComfyExtension):
             IrodoriEmptyLatent,
             IrodoriSwayScheduler,
             IrodoriTrimTail,
-            IrodoriWatermark,
         ]
 
 
