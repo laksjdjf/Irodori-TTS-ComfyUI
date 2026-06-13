@@ -48,6 +48,7 @@ Hugging Face から自動ダウンロードされる。
 | `IrodoriSpeakerEmbedLoader` | speaker inversion 埋め込み（`models/speaker_embeddings/*.safetensors`）→ SPEAKER_EMBED |
 | `IrodoriSpeakerEncode` | 参照 LATENT（VAEEncodeAudio）→ speaker encoder → SPEAKER_EMBED |
 | `IrodoriSpeakerEmbedMerge` | 複数の SPEAKER_EMBED を結合（concat=トークン結合 / average=平均、重み付き可） |
+| `IrodoriSpeakerEmbedResample` | SPEAKER_EMBED をトークン軸の適応平均プーリングで固定数に縮小 |
 | `IrodoriTextEncode` | テキスト＋話者埋め込み → 4種 CONDITIONING（cond / text_uncond / speaker_uncond / caption_uncond） |
 | `IrodoriCFGGuider` | N-way CFG の GUIDER を作成（cfg_min_t〜cfg_max_t の範囲でのみCFG適用） |
 | `IrodoriEmptyLatent` | duration 予測（seconds=0 で自動）→ ゼロ LATENT |
@@ -80,6 +81,23 @@ DiT の cross-attention context（K/V）として消費され、attention はト
 - `average`: `(w_a·e_a + w_b·e_b)/Σw` の正規化凸ブレンド → 声A↔Bの補間スライダー
 - `concat`: 各ブロックを weight 倍 → K は RMSNorm で配分不変、V 寄与が線形にスケール
   するため、各声の「寄与の大きさ」を調整する。weight 全て1.0なら素の concat/平均と一致。
+
+### トークン数の均等化（IrodoriSpeakerEmbedResample）
+
+joint-softmax の attention 質量は各ソースのトークン数にほぼ比例するため、
+件数が大きく違う埋め込みを concat すると多い方が支配的になる（例: 参照音声 315 ＋
+inversion 16 ≒ 20:1）。`IrodoriSpeakerEmbedResample` で各埋め込みをトークン軸の
+**適応平均プーリング**で共通トークン数に縮小してから Merge すると、対等にブレンドできる。
+長い参照埋め込み（約25トークン/秒）の圧縮にも使える。話者性は時間方向にほぼ一定なので、
+隣接トークンの平均は声質を保ったまま細かい時間変動だけ落とす。
+
+- `target_tokens`: 出力トークン数（現在数以上なら no-op）
+- `keep_first_token`: encoder 由来埋め込みの先頭（全体要約の mean token）を保護して残りだけプール
+
+> 値の正規化は意図的に入れていない。encoder 出力は学習済みの per-dim 重み付き RMSNorm
+> （`speaker_norm`）を通っているため、unit RMS への強制正規化はそのスケールを壊して
+> 分布外に押し出してしまう。件数の不均衡は値スケールではなくトークン数の問題なので、
+> プーリングで解決するのが正しい。
 
 残りは公式ノードを使う: `LoadAudio` / `VAEEncodeAudio` / `VAEDecodeAudio` /
 `SaveAudio` / `RandomNoise` / `KSamplerSelect` / `BasicScheduler` / `SamplerCustomAdvanced`
@@ -223,6 +241,7 @@ nodes/
 ├── speaker_embed_loader.py  # IrodoriSpeakerEmbedLoader
 ├── speaker_encode.py        # IrodoriSpeakerEncode (ref LATENT → SPEAKER_EMBED)
 ├── embed_merge.py           # IrodoriSpeakerEmbedMerge
+├── embed_resample.py        # IrodoriSpeakerEmbedResample
 ├── text_encode.py           # IrodoriTextEncode
 ├── guider.py                # IrodoriCFGGuider + IrodoriGuider
 ├── latent.py                # IrodoriEmptyLatent
