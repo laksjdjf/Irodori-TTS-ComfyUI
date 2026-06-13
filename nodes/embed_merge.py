@@ -22,7 +22,7 @@ from comfy_api.latest import io
 
 from .types import SpeakerEmbed
 
-_W = {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.05}
+_W = {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.01}
 
 
 class IrodoriSpeakerEmbedMerge(io.ComfyNode):
