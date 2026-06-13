@@ -247,7 +247,7 @@ def test_speaker_embed_merge():
     # concat keeps all tokens
     out = em.IrodoriSpeakerEmbedMerge.execute(a, b, "concat").args[0]
     assert out["embedding"].shape == (32, 768)
-    out3 = em.IrodoriSpeakerEmbedMerge.execute(a, b, "concat", c).args[0]
+    out3 = em.IrodoriSpeakerEmbedMerge.execute(a, b, "concat", speaker_embed_c=c).args[0]
     assert out3["embedding"].shape == (40, 768)  # 16+16+8
     # concat works with differing token counts
     assert em.IrodoriSpeakerEmbedMerge.execute(a, c, "concat").args[0]["embedding"].shape == (24, 768)
@@ -256,6 +256,28 @@ def test_speaker_embed_merge():
     avg = em.IrodoriSpeakerEmbedMerge.execute(a, b, "average").args[0]
     assert avg["embedding"].shape == (16, 768)
     assert torch.allclose(avg["embedding"], (a["embedding"] + b["embedding"]) / 2)
+
+    # weighted average = normalized convex blend
+    wavg = em.IrodoriSpeakerEmbedMerge.execute(a, b, "average", weight_a=3.0, weight_b=1.0).args[0]
+    expected = (3.0 * a["embedding"] + 1.0 * b["embedding"]) / 4.0
+    assert torch.allclose(wavg["embedding"], expected)
+    # weight 1/0 -> just the first embedding
+    only_a = em.IrodoriSpeakerEmbedMerge.execute(a, b, "average", weight_a=1.0, weight_b=0.0).args[0]
+    assert torch.allclose(only_a["embedding"], a["embedding"])
+
+    # weighted concat scales each block (V-contribution gain)
+    wc = em.IrodoriSpeakerEmbedMerge.execute(a, b, "concat", weight_a=2.0, weight_b=0.5).args[0]
+    assert wc["embedding"].shape == (32, 768)
+    assert torch.allclose(wc["embedding"][:16], 2.0 * a["embedding"])
+    assert torch.allclose(wc["embedding"][16:], 0.5 * b["embedding"])
+
+    # all-zero average weights raise
+    try:
+        em.IrodoriSpeakerEmbedMerge.execute(a, b, "average", weight_a=0.0, weight_b=0.0)
+        assert False, "zero-sum average weights must raise"
+    except ValueError:
+        pass
+
     try:
         em.IrodoriSpeakerEmbedMerge.execute(a, c, "average")
         assert False, "average with mismatched token counts must raise"

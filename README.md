@@ -70,6 +70,11 @@ DiT の cross-attention context（K/V）として消費され、attention はト
 順序不変・可変長なので、**トークン方向の結合（concat）**が各埋め込みの学習済みトークンを
 保持したまま混ぜる自然な方法（推奨）。`average` は同一トークン数同士の中間へモーフする。
 
+各入力に **weight**（既定1.0）を指定でき、key 射影が RMSNorm される性質から:
+- `average`: `(w_a·e_a + w_b·e_b)/Σw` の正規化凸ブレンド → 声A↔Bの補間スライダー
+- `concat`: 各ブロックを weight 倍 → K は RMSNorm で配分不変、V 寄与が線形にスケール
+  するため、各声の「寄与の大きさ」を調整する。weight 全て1.0なら素の concat/平均と一致。
+
 残りは公式ノードを使う: `LoadAudio` / `VAEEncodeAudio` / `VAEDecodeAudio` /
 `SaveAudio` / `RandomNoise` / `KSamplerSelect` / `BasicScheduler` / `SamplerCustomAdvanced`
 
