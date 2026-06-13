@@ -212,7 +212,7 @@ def test_v3_schemas():
     pkg = importlib.import_module(PKG)
     ext = asyncio.run(pkg.comfy_entrypoint())
     nodes = asyncio.run(ext.get_node_list())
-    assert len(nodes) == 9
+    assert len(nodes) == 10
     for n in nodes:
         schema = n.GET_SCHEMA()  # validates input/output id uniqueness
         assert schema.display_name
@@ -236,6 +236,50 @@ def test_sway_scheduler():
     # denoise scales the start point (audio2audio)
     half = sch.sway_sigmas(10, -1.0, denoise=0.5)
     assert abs(float(half[0]) - 0.5) < 1e-6 and float(half[-1]) == 0.0
+
+
+def test_encode_speaker_from_latent():
+    """ref LATENT → speaker encoder → (tokens, speaker_dim), via the real
+    patch_sequence_with_mask + prepend-mean-token plumbing with a stub encoder."""
+    cd = _mod("core.conditioning")
+    import comfy.model_patcher
+
+    D, ldim, spk_dim = 8, 8, 16  # latent_patch_size=1 so D==ldim
+    T = 5
+
+    class StubEncoder(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.proj = torch.nn.Linear(D, spk_dim)
+
+        def forward(self, latent, mask):
+            return self.proj(latent)  # (B, S, spk_dim), preserves length
+
+    class StubRFDiT(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.speaker_encoder = StubEncoder()
+            self.speaker_norm = torch.nn.Identity()
+
+        @staticmethod
+        def _prepend_masked_mean_token(state, mask):
+            mean = state.mean(dim=1, keepdim=True)
+            return torch.cat([mean, state], dim=1), mask
+
+    cfg = type("Cfg", (), {
+        "latent_dim": ldim, "latent_patch_size": 1, "speaker_patch_size": 1,
+        "patched_latent_dim": D, "use_speaker_condition_resolved": True,
+    })()
+    mw = _mod("core.model_wrapper")
+    w = mw.IrodoriModelWrapper(StubRFDiT(), cfg, None, None, 256,
+                               torch.device("cpu"), torch.float32)
+    patcher = comfy.model_patcher.ModelPatcher(
+        w, torch.device("cpu"), torch.device("cpu"), size=4)
+
+    ref = {"samples": torch.randn(1, D, 1, T)}  # 4D sampling format
+    emb = cd.encode_speaker_from_latent(patcher, ref)
+    # T tokens + 1 prepended mean token
+    assert emb.shape == (T + 1, spk_dim), emb.shape
 
 
 def test_speaker_embed_merge():

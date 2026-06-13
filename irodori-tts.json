@@ -15,10 +15,18 @@
       "speaker_uncond_mode": "mask",
       "caption": "",
       "model": ["1", 0],
-      "ref_latent": ["3", 0]
+      "speaker_embed": ["13", 0]
     },
     "class_type": "IrodoriTextEncode",
     "_meta": { "title": "Irodori Text Encode" }
+  },
+  "13": {
+    "inputs": {
+      "model": ["1", 0],
+      "ref_latent": ["3", 0]
+    },
+    "class_type": "IrodoriSpeakerEncode",
+    "_meta": { "title": "Irodori Speaker Encode" }
   },
   "3": {
     "inputs": {

@@ -68,11 +68,59 @@ class EncodedConditions(NamedTuple):
     has_real_speaker: bool  # speaker condition backed by a ref audio / inversion
 
 
+def ref_latent_to_irodori(ref_latent: dict, model_cfg, device, dtype):
+    """ComfyUI LATENT dict → (latent in encode_conditions space, mask)."""
+    from irodori_tts.codec import patchify_latent
+
+    ref = ref_latent["samples"]
+    # encode_conditions expects latent-patched space: (B, T, latent_dim*latent_patch_size)
+    if ref.ndim == 4:
+        # ComfyUI sampling format (B, D, 1, T_p) — already latent-patched
+        ref = comfy_to_irodori(ref)
+    else:
+        # raw codec latent (B, T_lat, latent_dim)
+        ref = patchify_latent(ref, model_cfg.latent_patch_size)
+    ref = ref.to(device=device, dtype=dtype)
+    msk = torch.ones(ref.shape[0], ref.shape[1], dtype=torch.bool, device=device)
+    return ref, msk
+
+
+def encode_speaker_from_latent(model, ref_latent: dict) -> torch.Tensor:
+    """
+    Run the speaker encoder on a reference LATENT and return the speaker_state
+    (tokens, speaker_dim) — after speaker_norm + the prepended mean token, i.e.
+    the exact tensor the DiT consumes. This is a drop-in SPEAKER_EMBED: it is
+    fed back through speaker_state_override, which skips encoder/norm/prepend,
+    so the result is identical to conditioning directly on the reference latent.
+    """
+    from irodori_tts.model import patch_sequence_with_mask
+
+    comfy.model_management.load_models_gpu([model])
+    w = model.model            # IrodoriModelWrapper
+    device = model.load_device
+    irodori = w.diffusion_model  # TextToLatentRFDiT
+    model_cfg = w.model_cfg
+
+    if not model_cfg.use_speaker_condition_resolved:
+        raise ValueError("This checkpoint has speaker conditioning disabled.")
+    if getattr(irodori, "speaker_encoder", None) is None:
+        raise ValueError("This checkpoint has no speaker encoder (speaker-inversion only).")
+
+    ref, msk = ref_latent_to_irodori(ref_latent, model_cfg, device, w.dtype)
+
+    with torch.no_grad():
+        ref_p, msk_p = patch_sequence_with_mask(ref, msk, model_cfg.speaker_patch_size)
+        state = irodori.speaker_encoder(ref_p, msk_p)
+        state = irodori.speaker_norm(state)
+        state, _ = irodori._prepend_masked_mean_token(state, msk_p)
+
+    return state[0].contiguous()  # (tokens, speaker_dim) — first reference item
+
+
 def encode_text_conditions(
     model,
     text: str,
     *,
-    ref_latent: dict | None = None,
     speaker_embed: dict | None = None,
     caption: str = "",
     speaker_uncond_mode: str = "mask",
@@ -80,16 +128,12 @@ def encode_text_conditions(
     """
     Normalize + tokenize + encode_conditions on a loaded MODEL (ModelPatcher).
 
-    ref_latent:    ComfyUI LATENT dict from VAEEncodeAudio, samples in 4D
-                   sampling format (B, D, 1, T_p) or raw 3D (B, T_lat, latent_dim),
-                   or None for no speaker reference.
-    speaker_embed: SPEAKER_EMBED dict from IrodoriSpeakerEmbedLoader,
-                   {"embedding": Tensor (tokens, speaker_dim)}. Bypasses the
-                   speaker encoder via speaker_state_override. Mutually
-                   exclusive with ref_latent.
+    speaker_embed: SPEAKER_EMBED dict {"embedding": Tensor (tokens, speaker_dim)}
+                   from IrodoriSpeakerEmbedLoader / IrodoriSpeakerEncode /
+                   IrodoriSpeakerEmbedMerge. Passed via speaker_state_override.
+                   None → no reference (empty-ref / no_ref fallback).
     """
     from irodori_tts.text_normalization import normalize_text
-    from irodori_tts.codec import patchify_latent
 
     comfy.model_management.load_models_gpu([model])
     w = model.model            # IrodoriModelWrapper
@@ -102,46 +146,23 @@ def encode_text_conditions(
     text_ids = text_ids.to(device)
     text_mask = text_mask.to(device)
 
-    # --- speaker inversion embedding (overrides the speaker encoder) ---
-    if ref_latent is not None and speaker_embed is not None:
-        raise ValueError(
-            "ref_latent and speaker_embed are mutually exclusive. "
-            "Connect only one speaker conditioning source."
-        )
+    # --- speaker condition: a single SPEAKER_EMBED, fed via override ---
     spk_override = None
     if speaker_embed is not None:
         if not model_cfg.use_speaker_condition_resolved:
             raise ValueError(
-                "This checkpoint has speaker conditioning disabled; "
-                "disconnect speaker_embed."
+                "This checkpoint has speaker conditioning disabled; disconnect speaker_embed."
             )
         # (tokens, speaker_dim) — batch expansion, dtype cast and dim check
         # happen inside encode_conditions
         spk_override = speaker_embed["embedding"].to(device=device)
 
-    # --- ref latent (speaker conditioning) ---
+    # When speaker conditioning is enabled but no embed is given (and the model
+    # has no baked-in inversion), pass the empty/no_ref reference.
     ref_lat = ref_msk = None
     has_speaker_inversion = getattr(irodori, "speaker_inversion", None) is not None
-    needs_ref = (
-        model_cfg.use_speaker_condition_resolved
-        and not has_speaker_inversion
-        and spk_override is None
-    )
-    if needs_ref:
-        if ref_latent is not None:
-            ref_tensor = ref_latent["samples"]
-            # encode_conditions expects latent-patched space: (B, T, latent_dim*latent_patch_size)
-            if ref_tensor.ndim == 4:
-                # ComfyUI sampling format (B, D, 1, T_p) — already latent-patched
-                ref_tensor = comfy_to_irodori(ref_tensor)
-            else:
-                # raw codec latent (B, T_lat, latent_dim)
-                ref_tensor = patchify_latent(ref_tensor, model_cfg.latent_patch_size)
-            ref_lat = ref_tensor.to(device=device, dtype=w.dtype)
-            ref_msk = torch.ones(ref_lat.shape[0], ref_lat.shape[1],
-                                 dtype=torch.bool, device=device)
-        else:
-            ref_lat, ref_msk = empty_ref(model_cfg, device, w.dtype)
+    if model_cfg.use_speaker_condition_resolved and not has_speaker_inversion and spk_override is None:
+        ref_lat, ref_msk = empty_ref(model_cfg, device, w.dtype)
 
     # --- caption tokens ---
     cap_ids = cap_msk = None
@@ -169,6 +190,6 @@ def encode_text_conditions(
         )
 
     has_real_speaker = model_cfg.use_speaker_condition_resolved and (
-        has_speaker_inversion or ref_latent is not None or speaker_embed is not None
+        has_speaker_inversion or speaker_embed is not None
     )
     return EncodedConditions(*encoded, has_real_speaker=has_real_speaker)

@@ -17,18 +17,14 @@ class IrodoriTextEncode(io.ComfyNode):
             node_id="IrodoriTextEncode",
             display_name="Irodori Text Encode",
             category="Irodori-TTS",
-            description="Encode text (+ speaker reference / inversion embedding + caption) into cond and uncond CONDITIONINGs.",
+            description="Encode text (+ speaker embedding + caption) into cond and uncond CONDITIONINGs.",
             inputs=[
                 io.Model.Input("model"),
                 io.String.Input("text", multiline=True, default=""),
                 io.Combo.Input("speaker_uncond_mode", options=["mask", "noise"]),
-                io.Latent.Input(
-                    "ref_latent", optional=True,
-                    tooltip="Speaker reference from VAEEncodeAudio (mutually exclusive with speaker_embed)",
-                ),
                 SpeakerEmbed.Input(
                     "speaker_embed", optional=True,
-                    tooltip="Speaker inversion embedding (mutually exclusive with ref_latent)",
+                    tooltip="Speaker embedding (IrodoriSpeakerEncode from reference audio, a loaded inversion embedding, or a merge). Leave unconnected for no speaker reference.",
                 ),
                 io.String.Input("caption", multiline=True, default="", optional=True),
             ],
@@ -46,13 +42,11 @@ class IrodoriTextEncode(io.ComfyNode):
         model,
         text: str,
         speaker_uncond_mode: str,
-        ref_latent: dict | None = None,
         speaker_embed: dict | None = None,
         caption: str = "",
     ) -> io.NodeOutput:
         enc = encode_text_conditions(
             model, text,
-            ref_latent=ref_latent,
             speaker_embed=speaker_embed,
             caption=caption,
             speaker_uncond_mode=speaker_uncond_mode,
