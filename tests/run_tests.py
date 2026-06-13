@@ -212,7 +212,7 @@ def test_v3_schemas():
     pkg = importlib.import_module(PKG)
     ext = asyncio.run(pkg.comfy_entrypoint())
     nodes = asyncio.run(ext.get_node_list())
-    assert len(nodes) == 8
+    assert len(nodes) == 9
     for n in nodes:
         schema = n.GET_SCHEMA()  # validates input/output id uniqueness
         assert schema.display_name
@@ -236,6 +236,38 @@ def test_sway_scheduler():
     # denoise scales the start point (audio2audio)
     half = sch.sway_sigmas(10, -1.0, denoise=0.5)
     assert abs(float(half[0]) - 0.5) < 1e-6 and float(half[-1]) == 0.0
+
+
+def test_speaker_embed_merge():
+    em = _mod("nodes.embed_merge")
+    a = {"embedding": torch.randn(16, 768)}
+    b = {"embedding": torch.randn(16, 768)}
+    c = {"embedding": torch.randn(8, 768)}
+
+    # concat keeps all tokens
+    out = em.IrodoriSpeakerEmbedMerge.execute(a, b, "concat").args[0]
+    assert out["embedding"].shape == (32, 768)
+    out3 = em.IrodoriSpeakerEmbedMerge.execute(a, b, "concat", c).args[0]
+    assert out3["embedding"].shape == (40, 768)  # 16+16+8
+    # concat works with differing token counts
+    assert em.IrodoriSpeakerEmbedMerge.execute(a, c, "concat").args[0]["embedding"].shape == (24, 768)
+
+    # average requires equal token counts
+    avg = em.IrodoriSpeakerEmbedMerge.execute(a, b, "average").args[0]
+    assert avg["embedding"].shape == (16, 768)
+    assert torch.allclose(avg["embedding"], (a["embedding"] + b["embedding"]) / 2)
+    try:
+        em.IrodoriSpeakerEmbedMerge.execute(a, c, "average")
+        assert False, "average with mismatched token counts must raise"
+    except ValueError:
+        pass
+
+    # speaker_dim mismatch always raises
+    try:
+        em.IrodoriSpeakerEmbedMerge.execute(a, {"embedding": torch.randn(16, 512)}, "concat")
+        assert False, "speaker_dim mismatch must raise"
+    except ValueError:
+        pass
 
 
 def test_trim_tail():

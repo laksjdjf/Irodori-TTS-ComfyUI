@@ -46,6 +46,7 @@ Hugging Face から自動ダウンロードされる。
 | `IrodoriCheckpointLoader` | チェックポイント読み込み → MODEL + VAE |
 | `IrodoriLoraLoader` | PEFT 形式 LoRA をディレクトリ直指定で適用（変換不要） |
 | `IrodoriSpeakerEmbedLoader` | speaker inversion 埋め込み（`models/speaker_embeddings/*.safetensors`）→ SPEAKER_EMBED |
+| `IrodoriSpeakerEmbedMerge` | 複数の SPEAKER_EMBED を結合（concat=トークン結合 / average=平均） |
 | `IrodoriTextEncode` | テキスト＋話者条件 → 4種 CONDITIONING（cond / text_uncond / speaker_uncond / caption_uncond） |
 | `IrodoriCFGGuider` | N-way CFG の GUIDER を作成（cfg_min_t〜cfg_max_t の範囲でのみCFG適用） |
 | `IrodoriEmptyLatent` | duration 予測（seconds=0 で自動）→ ゼロ LATENT |
@@ -63,6 +64,11 @@ pip install git+https://github.com/SesameAILabs/silentcipher.git
 話者条件は `ref_latent`（参照音声）か `speaker_embed`（inversion 埋め込み）の**どちらか一方**を
 `IrodoriTextEncode` に接続する（両方接続するとエラー）。`speaker_embed` は
 `IrodoriEmptyLatent` にも接続でき、duration 予測の精度が上がる。
+
+複数話者をブレンドするには `IrodoriSpeakerEmbedMerge` を挟む。speaker 埋め込みは
+DiT の cross-attention context（K/V）として消費され、attention はトークンに対して
+順序不変・可変長なので、**トークン方向の結合（concat）**が各埋め込みの学習済みトークンを
+保持したまま混ぜる自然な方法（推奨）。`average` は同一トークン数同士の中間へモーフする。
 
 残りは公式ノードを使う: `LoadAudio` / `VAEEncodeAudio` / `VAEDecodeAudio` /
 `SaveAudio` / `RandomNoise` / `KSamplerSelect` / `BasicScheduler` / `SamplerCustomAdvanced`
@@ -204,6 +210,7 @@ nodes/
 ├── checkpoint_loader.py     # IrodoriCheckpointLoader
 ├── lora_loader.py           # IrodoriLoraLoader (PEFT直接適用)
 ├── speaker_embed_loader.py  # IrodoriSpeakerEmbedLoader
+├── embed_merge.py           # IrodoriSpeakerEmbedMerge
 ├── text_encode.py           # IrodoriTextEncode
 ├── guider.py                # IrodoriCFGGuider + IrodoriGuider
 ├── latent.py                # IrodoriEmptyLatent
