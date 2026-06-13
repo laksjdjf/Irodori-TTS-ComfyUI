@@ -48,6 +48,7 @@ Hugging Face から自動ダウンロードされる。
 | `IrodoriSpeakerEmbedLoader` | speaker inversion 埋め込み（`models/speaker_embeddings/*.safetensors`）→ SPEAKER_EMBED |
 | `IrodoriSpeakerEncode` | 参照 LATENT（VAEEncodeAudio）→ speaker encoder → SPEAKER_EMBED |
 | `IrodoriSpeakerEmbedMerge` | 複数の SPEAKER_EMBED を結合（concat=トークン結合 / average=平均、重み付き可） |
+| `IrodoriSpeakerEmbedSampleTokens` | SPEAKER_EMBED からトークンをランダムに N 個抽出（本物のトークンを保持） |
 | `IrodoriTextEncode` | テキスト＋話者埋め込み → 4種 CONDITIONING（cond / text_uncond / speaker_uncond / caption_uncond） |
 | `IrodoriCFGGuider` | N-way CFG の GUIDER を作成（cfg_min_t〜cfg_max_t の範囲でのみCFG適用） |
 | `IrodoriEmptyLatent` | duration 予測（seconds=0 で自動）→ ゼロ LATENT |
@@ -228,6 +229,7 @@ nodes/
 ├── speaker_embed_loader.py  # IrodoriSpeakerEmbedLoader
 ├── speaker_encode.py        # IrodoriSpeakerEncode (ref LATENT → SPEAKER_EMBED)
 ├── embed_merge.py           # IrodoriSpeakerEmbedMerge
+├── embed_sample.py          # IrodoriSpeakerEmbedSampleTokens
 ├── text_encode.py           # IrodoriTextEncode
 ├── guider.py                # IrodoriCFGGuider + IrodoriGuider
 ├── latent.py                # IrodoriEmptyLatent

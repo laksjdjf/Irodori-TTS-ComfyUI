@@ -212,7 +212,7 @@ def test_v3_schemas():
     pkg = importlib.import_module(PKG)
     ext = asyncio.run(pkg.comfy_entrypoint())
     nodes = asyncio.run(ext.get_node_list())
-    assert len(nodes) == 10
+    assert len(nodes) == 11
     for n in nodes:
         schema = n.GET_SCHEMA()  # validates input/output id uniqueness
         assert schema.display_name
@@ -294,6 +294,34 @@ def test_merge_mixed_device_dtype():
     assert out["embedding"].dtype == torch.float32
     avg = em.IrodoriSpeakerEmbedMerge.execute(a, b, "average").args[0]
     assert avg["embedding"].dtype == torch.float32
+
+
+def test_speaker_embed_sample_tokens():
+    sm = _mod("nodes.embed_sample")
+    N = sm.IrodoriSpeakerEmbedSampleTokens
+    emb = torch.arange(20, dtype=torch.float32)[:, None].repeat(1, 4)  # token i = i
+
+    out = N.execute({"embedding": emb}, 5, 0, False).args[0]["embedding"]
+    assert out.shape == (5, 4)
+    # every kept token is a real, intact source token
+    kept = {int(v) for v in out[:, 0]}
+    assert kept.issubset(set(range(20))) and len(kept) == 5
+    # indices kept sorted
+    assert torch.all(out[:, 0].diff() > 0)
+
+    # deterministic per seed; different seeds differ
+    a = N.execute({"embedding": emb}, 5, 7, False).args[0]["embedding"]
+    a2 = N.execute({"embedding": emb}, 5, 7, False).args[0]["embedding"]
+    b = N.execute({"embedding": emb}, 5, 8, False).args[0]["embedding"]
+    assert torch.allclose(a, a2) and not torch.allclose(a, b)
+
+    # keep_first_token always includes token 0
+    k = N.execute({"embedding": emb}, 5, 3, True).args[0]["embedding"]
+    assert k.shape == (5, 4) and float(k[0, 0]) == 0.0
+
+    # num_tokens >= count -> no-op
+    same = N.execute({"embedding": emb}, 50, 0, False).args[0]["embedding"]
+    assert torch.allclose(same, emb)
 
 
 def test_speaker_embed_merge():
