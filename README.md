@@ -46,6 +46,7 @@ Hugging Face から自動ダウンロードされる。
 | `IrodoriCheckpointLoader` | チェックポイント読み込み → MODEL + VAE |
 | `IrodoriLoraLoader` | PEFT 形式 LoRA をディレクトリ直指定で適用（変換不要） |
 | `IrodoriSpeakerEmbedLoader` | speaker inversion 埋め込み（`models/speaker_embeddings/*.safetensors`）→ SPEAKER_EMBED |
+| `IrodoriSpeakerEmbedSave` | SPEAKER_EMBED を `models/speaker_embeddings/` に保存（Loaderで読み戻せる） |
 | `IrodoriSpeakerEncode` | 参照 LATENT（VAEEncodeAudio）→ speaker encoder → SPEAKER_EMBED |
 | `IrodoriSpeakerEmbedMerge` | 複数の SPEAKER_EMBED を結合（concat=トークン結合 / average=平均、重み付き可） |
 | `IrodoriSpeakerEmbedSampleTokens` | SPEAKER_EMBED からトークンをランダムに N 個抽出（本物のトークンを保持） |
@@ -227,6 +228,7 @@ nodes/
 ├── checkpoint_loader.py     # IrodoriCheckpointLoader
 ├── lora_loader.py           # IrodoriLoraLoader (PEFT直接適用)
 ├── speaker_embed_loader.py  # IrodoriSpeakerEmbedLoader
+├── embed_save.py            # IrodoriSpeakerEmbedSave
 ├── speaker_encode.py        # IrodoriSpeakerEncode (ref LATENT → SPEAKER_EMBED)
 ├── embed_merge.py           # IrodoriSpeakerEmbedMerge
 ├── embed_sample.py          # IrodoriSpeakerEmbedSampleTokens

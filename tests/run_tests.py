@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import os
 import sys
 import traceback
 from pathlib import Path
@@ -212,7 +213,7 @@ def test_v3_schemas():
     pkg = importlib.import_module(PKG)
     ext = asyncio.run(pkg.comfy_entrypoint())
     nodes = asyncio.run(ext.get_node_list())
-    assert len(nodes) == 11
+    assert len(nodes) == 12
     for n in nodes:
         schema = n.GET_SCHEMA()  # validates input/output id uniqueness
         assert schema.display_name
@@ -322,6 +323,31 @@ def test_speaker_embed_sample_tokens():
     # num_tokens >= count -> no-op
     same = N.execute({"embedding": emb}, 50, 0, False).args[0]["embedding"]
     assert torch.allclose(same, emb)
+
+
+def test_speaker_embed_save_roundtrip():
+    sv = _mod("nodes.embed_save")
+    from safetensors.torch import load_file
+    from irodori_tts.speaker_inversion import normalize_speaker_inversion_payload
+
+    # path sanitization: no traversal, .safetensors appended
+    p = sv.resolve_save_path("../../evil")
+    assert os.path.basename(p) == "evil.safetensors"
+    assert ".." not in os.path.relpath(p, os.path.dirname(p))
+
+    emb = torch.randn(16, 768)
+    out = sv.IrodoriSpeakerEmbedSave.execute({"embedding": emb}, "_pytest_embed")
+    # passes the embedding through
+    assert torch.equal(out.args[0]["embedding"], emb)
+
+    saved = sv.resolve_save_path("_pytest_embed")
+    try:
+        raw = load_file(saved, device="cpu")
+        back = normalize_speaker_inversion_payload(raw)["speaker_embedding"]
+        assert back.shape == (16, 768) and torch.allclose(back, emb)
+    finally:
+        if os.path.exists(saved):
+            os.remove(saved)
 
 
 def test_speaker_embed_merge():
